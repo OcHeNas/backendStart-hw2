@@ -1,0 +1,11 @@
+services:
+  crypto:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      JWT_SECRET: ${JWT_SECRET:-}
+      COINGECKO_API_KEY: ${COINGECKO_API_KEY:-}
+      COINGECKO_BASE_URL: ${COINGECKO_BASE_URL:-https://api.coingecko.com/api/v3}
+      COINGECKO_KEY_HEADER: ${COINGECKO_KEY_HEADER:-x-cg-demo-api-key}
+    restart: unless-stopped
