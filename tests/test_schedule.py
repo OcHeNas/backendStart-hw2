@@ -72,8 +72,10 @@ def test_concurrent_triggers(authorized):
     authorized.post("/crypto", json={"symbol": "BTC"})
     with ThreadPoolExecutor(max_workers=4) as pool:
         responses = list(pool.map(lambda _: authorized.post("/schedule/trigger"), range(4)))
-    assert all(r.json()["updated_count"] == 1 for r in responses)
-    assert len(authorized.get("/crypto/BTC/history").json()["history"]) == 5
+    assert all(r.status_code in (200, 409) for r in responses)
+    succeeded = [r for r in responses if r.status_code == 200]
+    assert succeeded and all(r.json()["updated_count"] == 1 for r in succeeded)
+    assert len(authorized.get("/crypto/BTC/history").json()["history"]) == 1 + len(succeeded)
 
 
 def test_real_thread_reconfigure_disable_shutdown(provider, credentials):
@@ -93,7 +95,6 @@ def test_real_thread_reconfigure_disable_shutdown(provider, credentials):
         assert client.get("/schedule").json()["last_update"] is not None
         client.put("/schedule", json={"enabled": False, "interval_seconds": 10})
         calls = provider.calls
-        # A disabled worker ignores even an elapsed deadline.
         scheduler = app.state.scheduler
         with scheduler._condition:
             scheduler._deadline = time.monotonic() - 1

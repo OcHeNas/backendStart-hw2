@@ -77,7 +77,6 @@ def create_app(
         try:
             yield
         finally:
-            # Do not block the event loop while an in-flight worker finishes.
             from starlette.concurrency import run_in_threadpool
 
             await run_in_threadpool(scheduler.stop)
@@ -211,7 +210,6 @@ def create_app(
         return {"status": "ok"}
 
     app.include_router(protected)
-    # Validation is deliberately 400, not FastAPI's default 422.
     original_openapi = app.openapi
 
     def openapi():

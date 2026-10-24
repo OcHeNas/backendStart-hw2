@@ -36,7 +36,7 @@ def test_register_login(client, credentials):
     assert response.status_code == 201
     token = response.json()["token"]
     assert len(token.split(".")) == 3
-    encoded = client.app.state.auth.users.get_hash(credentials["username"])
+    encoded = client.app.state.auth.users.get(credentials["username"]).password_hash
     assert encoded.startswith("scrypt$") and credentials["password"] not in encoded
     assert client.post("/auth/register", json=credentials).status_code == 409
     assert client.post("/auth/login", json=credentials).status_code == 200
@@ -83,6 +83,7 @@ def test_invalid_jwt(authorized, kind):
     auth = authorized.app.state.auth
     claims = {
         "sub": "alice",
+        "uid": auth.users.get("alice").user_id,
         "iat": utcnow(),
         "exp": utcnow() + timedelta(hours=1),
         "iss": "cryptoserver",
@@ -195,8 +196,10 @@ def test_concurrent_add_refresh_delete(authorized):
     assert sorted(r.status_code for r in responses) == [201] + [409] * 7
     with ThreadPoolExecutor(max_workers=8) as pool:
         responses = list(pool.map(lambda _: authorized.put("/crypto/BTC/refresh"), range(20)))
-    assert all(r.status_code == 200 for r in responses)
-    assert len(authorized.get("/crypto/BTC/history").json()["history"]) == 21
+    assert all(r.status_code in (200, 409) for r in responses)
+    succeeded = sum(r.status_code == 200 for r in responses)
+    assert succeeded > 0
+    assert len(authorized.get("/crypto/BTC/history").json()["history"]) == 1 + succeeded
     with ThreadPoolExecutor(max_workers=2) as pool:
         refresh = pool.submit(authorized.put, "/crypto/BTC/refresh")
         delete = pool.submit(authorized.delete, "/crypto/BTC")

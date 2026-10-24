@@ -5,7 +5,7 @@ from datetime import timedelta
 
 import jwt
 
-from app.domain import Unauthorized, UserRepository, utcnow
+from app.domain import Unauthorized, User, UserRepository, utcnow
 
 
 def hash_password(password: str) -> str:
@@ -27,11 +27,12 @@ class AuthService:
         self.ttl = ttl
         self._dummy = hash_password(secrets.token_urlsafe(32))
 
-    def _token(self, username: str) -> str:
+    def _token(self, user: User) -> str:
         now = utcnow()
         return jwt.encode(
             {
-                "sub": username,
+                "sub": user.username,
+                "uid": user.user_id,
                 "iat": now,
                 "exp": now + timedelta(seconds=self.ttl),
                 "iss": "cryptoserver",
@@ -42,15 +43,15 @@ class AuthService:
         )
 
     def register(self, username: str, password: str) -> str:
-        self.users.add(username, hash_password(password))
-        return self._token(username)
+        user = self.users.add(username, hash_password(password))
+        return self._token(user)
 
     def login(self, username: str, password: str) -> str:
-        encoded = self.users.get_hash(username)
-        valid = verify_password(password, encoded or self._dummy)
-        if not encoded or not valid:
+        user = self.users.get(username)
+        valid = verify_password(password, user.password_hash if user else self._dummy)
+        if user is None or not valid:
             raise Unauthorized("Invalid username or password")
-        return self._token(username)
+        return self._token(user)
 
     def authenticate(self, token: str) -> str:
         try:
@@ -60,11 +61,12 @@ class AuthService:
                 algorithms=["HS256"],
                 issuer="cryptoserver",
                 audience="cryptoserver",
-                options={"require": ["sub", "exp", "iat", "iss", "aud"]},
+                options={"require": ["sub", "uid", "exp", "iat", "iss", "aud"]},
             )
         except jwt.PyJWTError as exc:
             raise Unauthorized("Invalid or expired token") from exc
         username = data["sub"]
-        if not isinstance(username, str) or not self.users.get_hash(username):
+        user = self.users.get(username) if isinstance(username, str) else None
+        if user is None or data["uid"] != user.user_id:
             raise Unauthorized("Invalid or expired token")
         return username

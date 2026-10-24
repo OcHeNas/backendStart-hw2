@@ -1,20 +1,22 @@
 from threading import RLock
 
-from app.domain import Conflict, Crypto, NotFound
+from app.domain import Conflict, Crypto, NotFound, User
 
 
 class MemoryUsers:
     def __init__(self) -> None:
         self._lock = RLock()
-        self._users: dict[str, str] = {}
+        self._users: dict[str, User] = {}
 
-    def add(self, username: str, password_hash: str) -> None:
+    def add(self, username: str, password_hash: str) -> User:
         with self._lock:
             if username in self._users:
                 raise Conflict("Username already exists")
-            self._users[username] = password_hash
+            user = User(username, password_hash)
+            self._users[username] = user
+            return user
 
-    def get_hash(self, username: str) -> str | None:
+    def get(self, username: str) -> User | None:
         with self._lock:
             return self._users.get(username)
 
@@ -40,10 +42,24 @@ class MemoryCryptos:
                 raise Conflict("Cryptocurrency already exists")
             self._cryptos[crypto.coin.symbol] = crypto
 
-    def replace_many(self, cryptos: tuple[Crypto, ...]) -> None:
+    def replace_many(self, expected: tuple[Crypto, ...], cryptos: tuple[Crypto, ...]) -> None:
+        if len(expected) != len(cryptos):
+            raise ValueError("Snapshot and update sizes differ")
+        if len({c.coin.symbol for c in expected}) != len(expected):
+            raise ValueError("Duplicate symbols in update")
         with self._lock:
-            if any(c.coin.symbol not in self._cryptos for c in cryptos):
-                raise NotFound("Cryptocurrency is not tracked")
+            for before, after in zip(expected, cryptos, strict=True):
+                if (
+                    after.coin != before.coin
+                    or after.record_id != before.record_id
+                    or after.version != before.version + 1
+                ):
+                    raise ValueError("Invalid update version or identity")
+                current = self._cryptos.get(before.coin.symbol)
+                if current is None:
+                    raise NotFound("Cryptocurrency is not tracked")
+                if (current.record_id, current.version) != (before.record_id, before.version):
+                    raise Conflict("Cryptocurrency changed during update; retry the request")
             self._cryptos.update({c.coin.symbol: c for c in cryptos})
 
     def delete(self, symbol: str) -> None:

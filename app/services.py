@@ -1,5 +1,7 @@
 import re
-from threading import RLock
+from collections.abc import Iterator
+from contextlib import contextmanager
+from threading import BoundedSemaphore
 
 from app.domain import (
     Conflict,
@@ -20,14 +22,27 @@ def normalize_symbol(symbol: str) -> str:
 
 
 class CryptoService:
-    def __init__(self, repository: CryptoRepository, provider: PriceProvider) -> None:
+    def __init__(
+        self, repository: CryptoRepository, provider: PriceProvider, max_inflight: int = 4
+    ) -> None:
+        if max_inflight < 1:
+            raise ValueError("max_inflight must be positive")
         self.repository = repository
         self.provider = provider
-        self._mutations = RLock()
+        self._slots = BoundedSemaphore(max_inflight)
+
+    @contextmanager
+    def _admit(self) -> Iterator[None]:
+        if not self._slots.acquire(blocking=False):
+            raise Conflict("Too many price operations; retry later")
+        try:
+            yield
+        finally:
+            self._slots.release()
 
     def add(self, symbol: str) -> Crypto:
         symbol = normalize_symbol(symbol)
-        with self._mutations:
+        with self._admit():
             if any(c.coin.symbol == symbol for c in self.repository.all()):
                 raise Conflict("Cryptocurrency already exists")
             coin = self.provider.resolve(symbol)
@@ -40,26 +55,23 @@ class CryptoService:
         return self.repository.get(normalize_symbol(symbol))
 
     def refresh(self, symbol: str) -> Crypto:
-        with self._mutations:
-            crypto = self.get(symbol)
-            price = self.provider.prices([crypto.coin.coin_id])[crypto.coin.coin_id]
-            crypto = crypto.append(price, utcnow())
-            self.repository.replace_many((crypto,))
-            return crypto
+        with self._admit():
+            before = self.get(symbol)
+            price = self.provider.prices([before.coin.coin_id])[before.coin.coin_id]
+            after = before.append(price, utcnow())
+            self.repository.replace_many((before,), (after,))
+            return after
 
     def refresh_all(self) -> int:
-        with self._mutations:
-            cryptos = self.repository.all()
-            if not cryptos:
+        with self._admit():
+            before = self.repository.all()
+            if not before:
                 return 0
-            prices = self.provider.prices([c.coin.coin_id for c in cryptos])
+            prices = self.provider.prices([c.coin.coin_id for c in before])
             now = utcnow()
-            # Commit only after every quote has been fetched and validated.
-            self.repository.replace_many(
-                tuple(c.append(prices[c.coin.coin_id], now) for c in cryptos)
-            )
-            return len(cryptos)
+            after = tuple(c.append(prices[c.coin.coin_id], now) for c in before)
+            self.repository.replace_many(before, after)
+            return len(before)
 
     def delete(self, symbol: str) -> None:
-        with self._mutations:
-            self.repository.delete(normalize_symbol(symbol))
+        self.repository.delete(normalize_symbol(symbol))

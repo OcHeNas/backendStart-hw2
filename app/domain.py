@@ -1,7 +1,8 @@
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from decimal import Decimal, localcontext
 from typing import Protocol
+from uuid import uuid4
 
 
 def utcnow() -> datetime:
@@ -33,6 +34,13 @@ class ProviderError(ServiceError):
 
 
 @dataclass(frozen=True)
+class User:
+    username: str
+    password_hash: str
+    user_id: str = field(default_factory=lambda: uuid4().hex)
+
+
+@dataclass(frozen=True)
 class Coin:
     symbol: str
     coin_id: str
@@ -49,9 +57,13 @@ class Price:
 class Crypto:
     coin: Coin
     history: tuple[Price, ...]
+    record_id: str = field(default_factory=lambda: uuid4().hex)
+    version: int = 0
 
     def append(self, price: Decimal, timestamp: datetime) -> "Crypto":
-        return replace(self, history=(*self.history, Price(price, timestamp))[-100:])
+        return replace(
+            self, history=(*self.history, Price(price, timestamp))[-100:], version=self.version + 1
+        )
 
     @property
     def latest(self) -> Price:
@@ -59,7 +71,6 @@ class Crypto:
 
     def stats(self) -> dict[str, Decimal | int | None]:
         values = [p.price for p in self.history]
-        # Stored quotes are never rounded; calculations use 50 significant digits.
         with localcontext() as ctx:
             ctx.prec = 50
             change = values[-1] - values[0]
@@ -78,13 +89,13 @@ class CryptoRepository(Protocol):
     def all(self) -> tuple[Crypto, ...]: ...
     def get(self, symbol: str) -> Crypto: ...
     def add(self, crypto: Crypto) -> None: ...
-    def replace_many(self, cryptos: tuple[Crypto, ...]) -> None: ...
+    def replace_many(self, expected: tuple[Crypto, ...], cryptos: tuple[Crypto, ...]) -> None: ...
     def delete(self, symbol: str) -> None: ...
 
 
 class UserRepository(Protocol):
-    def add(self, username: str, password_hash: str) -> None: ...
-    def get_hash(self, username: str) -> str | None: ...
+    def add(self, username: str, password_hash: str) -> User: ...
+    def get(self, username: str) -> User | None: ...
 
 
 class PriceProvider(Protocol):

@@ -4,7 +4,7 @@ from datetime import timedelta
 from threading import Condition, Lock, Thread
 from typing import Any
 
-from app.domain import InvalidInput, utcnow
+from app.domain import Conflict, InvalidInput, utcnow
 from app.services import CryptoService
 
 logger = logging.getLogger(__name__)
@@ -74,9 +74,12 @@ class Scheduler:
         return {"updated_count": count, "timestamp": stamp}
 
     def trigger(self) -> dict[str, Any]:
-        # Explicit triggers work even with automatic updates disabled.
-        with self._run_lock:
+        if not self._run_lock.acquire(blocking=False):
+            raise Conflict("A bulk update is already running; retry later")
+        try:
             return self._execute()
+        finally:
+            self._run_lock.release()
 
     def _loop(self) -> None:
         while True:
@@ -89,16 +92,17 @@ class Scheduler:
                 if self._stopped:
                     return
                 revision = self._revision
+            started = False
             try:
                 with self._run_lock:
                     with self._condition:
                         if self._stopped or not self._enabled or revision != self._revision:
                             continue
+                    started = True
                     self._execute()
             except Exception:
-                # The thread boundary logs unexpected failures and keeps the worker alive.
                 logger.exception("Scheduled price update failed")
             finally:
                 with self._condition:
-                    if revision == self._revision:
+                    if started:
                         self._plan()
