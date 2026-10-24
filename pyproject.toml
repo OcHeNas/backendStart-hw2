@@ -1,0 +1,24 @@
+[project]
+name = "cryptocurrency-price-server"
+version = "1.0.0"
+requires-python = ">=3.12"
+description = "In-memory cryptocurrency REST API with JWT and automatic updates"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+markers = ["schedule: automatic update and schedule API tests"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+ignore = ["E501", "B008"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/tests.py" = ["ALL"]
+
+[tool.ruff.format]
+exclude = ["tests/tests.py"]

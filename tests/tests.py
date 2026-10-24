@@ -434,6 +434,7 @@ class CryptoServerTestRunner:
 
             if response.status_code != 200:
                 self.error(f"Неверный статус код при обновлении цены: {response.status_code}")
+                self.error(f"Ответ сервера: {response.text}")
                 return False
 
             try:
@@ -579,6 +580,13 @@ class CryptoServerTestRunner:
                 headers=headers,
                 timeout=10
             )
+
+            if response.status_code not in (200, 201):
+                self.error(
+                    f"Не удалось добавить ETH перед удалением: "
+                    f"{response.status_code}, {response.text}"
+                )
+                return False
 
             response = requests.delete(
                 f"{self.server_url}/crypto/ETH",
